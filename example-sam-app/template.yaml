@@ -32,3 +32,28 @@ Resources:
       Policies:
         # Give Lambda basic execution Permission to the helloFromLambda
         - AWSLambdaBasicExecutionRole
+      Environment:
+        Variables:
+          PEER_NATS_URL: "nats://52.90.197.1:4222"
+      Layers:
+        - !Ref NatsExtensionLayerAmd64
+        # - !Ref NatsExtensionLayerArm64
+
+  # Layers for the nats-extension produced by `make package-all`
+  NatsExtensionLayerAmd64:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: nats-extension-linux-amd64
+      Description: nats-extension layer (amd64)
+      CompatibleArchitectures:
+        - x86_64
+      ContentUri: ../dist/nats-extension-linux-amd64.zip
+
+  NatsExtensionLayerArm64:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: nats-extension-linux-arm64
+      Description: nats-extension layer (arm64)
+      CompatibleArchitectures:
+        - arm64
+      ContentUri: ../dist/nats-extension-linux-arm64.zip
