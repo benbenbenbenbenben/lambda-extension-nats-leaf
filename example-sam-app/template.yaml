@@ -34,7 +34,7 @@ Resources:
         - AWSLambdaBasicExecutionRole
       Environment:
         Variables:
-          PEER_NATS_URL: "nats://52.90.197.1:4222"
+          PEER_NATS_URL: "nats://leaf:s3cr3t@52.90.197.1:7422"
       Layers:
         - !Ref NatsExtensionLayerAmd64
         # - !Ref NatsExtensionLayerArm64

@@ -1,19 +1,22 @@
 package main
 
 import (
-    "bytes"
-    "encoding/json"
-    "fmt"
-    "io/ioutil"
-    "log"
-    "net/http"
-    "os"
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io/ioutil"
+	"log"
+	"net/http"
+	"net/url"
+	"os"
+	"time"
 
-    "github.com/nats-io/nats.go"
+	server "github.com/nats-io/nats-server/v2/server"
+	"github.com/nats-io/nats.go"
 )
 
 const (
-    extensionName = "nats-lambda-extension"
+    extensionName = "nats-extension"
     eventsPath    = "/2020-01-01/extension"
 )
 
@@ -40,16 +43,67 @@ func main() {
         log.Fatal("AWS_LAMBDA_RUNTIME_API environment variable is not set")
     }
 
+    // Create an embedded NATS server configured as a leaf node to PEER_NATS_URL.
     natsURL := os.Getenv("PEER_NATS_URL")
     if natsURL == "" {
-        natsURL = "nats://localhost:4222" // Default NATS URL; adjust as needed
+        natsURL = "nats://localhost:4222"
     }
-
-    nc, err := nats.Connect(natsURL)
+ 
+    // Parse the peer URL for leafnode configuration.
+    peerURL, err := url.Parse(natsURL)
     if err != nil {
-        log.Fatalf("Failed to connect to NATS: %v", err)
+        log.Fatalf("Invalid PEER_NATS_URL: %v", err)
     }
-    defer nc.Close()
+ 
+    // Configure the embedded server to listen on localhost:4222 and connect as a leaf node.
+    opts := &server.Options{
+        Host: "127.0.0.1",
+        Port: 4222,
+        LeafNode: server.LeafNodeOpts{
+            Remotes: []*server.RemoteLeafOpts{
+                {
+                    URLs: []*url.URL{peerURL},
+                },
+            },
+        },
+    }
+ 
+    s, err := server.NewServer(opts)
+    if err != nil {
+        log.Fatalf("Failed to create embedded NATS server: %v", err)
+    }
+    s.ConfigureLogger()
+    // Run the server in a goroutine (server.Run will block).
+    go func() {
+        if err := server.Run(s); err != nil {
+            log.Fatalf("NATS server exited: %v", err)
+        }
+    }()
+ 
+    // Wait and retry connecting a client to the embedded server.
+    localURL := "nats://127.0.0.1:4222"
+    var nc *nats.Conn
+    for i := 0; i < 50; i++ {
+        nc, err = nats.Connect(localURL)
+        if err == nil {
+            break
+        }
+        time.Sleep(100 * time.Millisecond)
+    }
+    if err != nil {
+        // Ensure server is shutdown on failure to connect.
+        if s != nil {
+            s.Shutdown()
+        }
+        log.Fatalf("Failed to connect to embedded NATS server: %v", err)
+    }
+    // Close client and shutdown server when the extension exits.
+    defer func() {
+        nc.Close()
+        if s != nil {
+            s.Shutdown()
+        }
+    }()
 
     // Register the extension
     registerURL := fmt.Sprintf("http://%s%s/register", runtimeAPI, eventsPath)
@@ -59,7 +113,11 @@ func main() {
         log.Fatalf("Failed to marshal register request: %v", err)
     }
 
-    req, err := http.NewRequest("POST", registerURL, bytes.NewBuffer(jsonBody))
+    req, err := http.NewRequest(
+        "POST", 
+        registerURL, 
+        bytes.NewBuffer(jsonBody),
+    )
     if err != nil {
         log.Fatalf("Failed to create register request: %v", err)
     }
